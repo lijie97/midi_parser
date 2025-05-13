@@ -52,7 +52,7 @@ _NOTE_RE = re.compile(
     r"(?P<dots>\.*)(?P<tie>-?)$"
 )
 _REST_RE = re.compile(r"(?P<r>[R0])(?P<dur>[whqest]|/\d+)?(?P<dots>\.*)$")
-_CHORD_RE = re.compile(r"^[A-Ga-g][#b]?[^/]*$|^O$")    # “不像音符/休止” 即视作和弦
+_CHORD_RE = re.compile(r"^[A-Ga-g][#b]?[^/]*$|^O$")    # "不像音符/休止" 即视作和弦
 
 # ──────────── 工具 ──────────────────────────────────────
 def _beats(dur: str, dots: str, unit: float) -> float:
@@ -80,22 +80,72 @@ def _degree2midi(deg: int, acc: str, oct_shift: int, key_root: str) -> int:
 
 
 def parse_chord(sym: str) -> list[int]:
-    """'C', 'Em', 'F#m', 'Bb' → [midi, midi, midi] ；'O' → []"""
+    """
+    解析和弦符号，返回MIDI音符列表:
+    - 大三和弦: 'C', 'F#', 'Bb'
+    - 小三和弦: 'Cm', 'F#m', 'Bbm'
+    - 增三和弦: 'Caug', 'F#+', 'Bbaug'
+    - 减三和弦: 'Cdim', 'F#o', 'Bbo'
+    - 挂四和弦: 'Csus4', 'F#sus4'
+    - 挂二和弦: 'Csus2', 'F#sus2'
+    - 属七和弦: 'C7', 'F#7', 'Bb7'
+    - 大七和弦: 'CM7', 'Cmaj7', 'F#M7', 'BbM7'
+    - 小七和弦: 'Cm7', 'F#m7', 'Bbm7'
+    - 半减七和弦: 'Cm7b5', 'F#m7b5'
+    - 减七和弦: 'Cdim7', 'Co7', 'F#o7'
+    - 无和弦: 'O' → []
+    """
     if sym.upper() == 'O':
         return []
+    
     sym = sym.strip()
     root = sym[0].upper()
     idx = 1
+    
+    # 处理升降号
     if len(sym) > 1 and sym[1] in '#b':
         root += sym[1]
         idx += 1
-    qual = sym[idx:].lower()      # 目前只识别 'm'
-
+    
+    # 提取和弦类型
+    qual = sym[idx:].lower()
+    
     if root not in NOTE2MIDI:
         raise ValueError(f'未知和弦根音: {root}')
 
-    root_pitch = NOTE2MIDI[root] - 12           # 低 1 八度
-    intervals = (0, 3, 7) if qual == 'm' else (0, 4, 7)
+    root_pitch = NOTE2MIDI[root] - 12  # 低1八度
+    
+    # 默认大三和弦
+    intervals = (0, 4, 7)
+    
+    # 解析各种和弦类型
+    if qual == 'm':  # 小三和弦
+        intervals = (0, 3, 7)
+    elif qual in ('aug', '+'):  # 增三和弦 
+        intervals = (0, 4, 8)
+    elif qual in ('dim', 'o', '°'):  # 减三和弦
+        intervals = (0, 3, 6)
+    elif qual == 'sus4':  # 挂四和弦
+        intervals = (0, 5, 7)
+    elif qual == 'sus2':  # 挂二和弦
+        intervals = (0, 2, 7)
+    elif qual == '7':  # 属七和弦
+        intervals = (0, 4, 7, 10)
+    elif qual in ('m7', 'min7'):  # 小七和弦
+        intervals = (0, 3, 7, 10)
+    elif qual in ('maj7', 'M7'):  # 大七和弦
+        intervals = (0, 4, 7, 11)
+    elif qual in ('m7b5', 'ø'):  # 半减七和弦
+        intervals = (0, 3, 6, 10)
+    elif qual in ('dim7', 'o7', '°7'):  # 减七和弦
+        intervals = (0, 3, 6, 9)
+    elif qual == '6':  # 大六和弦
+        intervals = (0, 4, 7, 9)
+    elif qual == 'm6':  # 小六和弦
+        intervals = (0, 3, 7, 9)
+    elif qual in ('9', '7(9)'):  # 属九和弦(简化版,只取前4个音)
+        intervals = (0, 4, 7, 10, 14)
+    
     return [root_pitch + iv for iv in intervals]
 
 # ──────────── 解析 ──────────────────────────────────────
@@ -319,7 +369,7 @@ def main():
                 acc, reg = (int(x) for x in arg.split('=', 1)[1].split(','))
                 metro_vel = (max(0, min(acc, 127)), max(0, min(reg, 127)))
             except ValueError:
-                print('节拍器力度应为 “A,R”，已用默认 90,60')
+                print('节拍器力度应为 "A,R"，已用默认 90,60')
 
     parser = ScoreParser(txt.read_text(encoding='utf-8'))
     mid_path = build_midi(parser, out, metro_on, metro_vel)
