@@ -36,6 +36,7 @@ from constants import *
 from parse_chord import parse_chord
 from utils import _beats, _norm_key, _degree2midi
 from reutils import _NOTE_RE, _REST_RE, _CHORD_RE
+from chord_patterns import get_chord_pattern
 
 
 # ──────────── 解析 ──────────────────────────────────────
@@ -72,10 +73,17 @@ def build_midi(parser: ScoreParser,
     if key_root not in NOTE2MIDI:
         raise ValueError(f'#KEY 不支持: {key_root}')
 
+    # 获取拍号
     ts_num, ts_den = (int(x) for x in parser.meta.get('TIME', '4/4').split('/'))
     if ts_den & (ts_den - 1):
         raise ValueError('#TIME 分母必须是 2 的幂')
     beats_per_measure = ts_num * 4 / ts_den   # 四分音拍为 1
+    
+    # 获取和弦模式
+    chord_pattern_name = parser.meta.get('CHORD_PATTERN', 'block')
+    
+    # 为节奏型分解和弦传递拍号信息
+    chord_pattern = get_chord_pattern(chord_pattern_name, time_signature=(ts_num, ts_den))
 
     mid = MidiFile(ticks_per_beat=TICKS_PER_BEAT)
     melody = MidiTrack(); mid.tracks.append(melody)
@@ -96,11 +104,23 @@ def build_midi(parser: ScoreParser,
 
     chord_active = []
     chord_last_tick = 0
+    current_chord_pattern = chord_pattern
 
     toks = parser.tokens
     i, n = 0, len(toks)
     while i < n:
         tok = toks[i]
+        
+        # ── 元数据行 ──
+        if tok.startswith('#'):
+            if 'CHORD_PATTERN' in tok.upper():
+                try:
+                    _, pattern_name = tok[1:].split('=', 1)
+                    current_chord_pattern = get_chord_pattern(pattern_name.strip())
+                except Exception as e:
+                    print(f"警告：无法解析和弦模式设置 {tok}: {e}")
+            i += 1
+            continue
 
         # ── 小节线 ──
         if tok in ('|', '||'):
@@ -131,7 +151,7 @@ def build_midi(parser: ScoreParser,
             # 先关掉旧和弦
             if chord_active:
                 first = True
-                dt = cur_tick - chord_last_tick
+                dt = max(0, cur_tick - chord_last_tick)  # 确保时间为非负
                 for p in chord_active:
                     chords.append(Message('note_off', channel=CHORD_CH,
                                           note=p, velocity=0,
@@ -139,17 +159,81 @@ def build_midi(parser: ScoreParser,
                     first = False
                 chord_last_tick = cur_tick
 
-            # 开启新和弦
-            chord_active = parse_chord(tok)
-            if chord_active:
-                first = True
-                dt = cur_tick - chord_last_tick
-                for p in chord_active:
-                    chords.append(Message('note_on', channel=CHORD_CH,
-                                          note=p, velocity=CHORD_VELOCITY,
-                                          time=dt if first else 0))
-                    first = False
-                chord_last_tick = cur_tick
+            # 计算新和弦持续时间
+            chord_start_tick = cur_tick
+            
+            # 查找下一个和弦或曲末以计算持续时间
+            j = i + 1
+            found_next_chord = False
+            
+            while j < n:
+                next_tok = toks[j]
+                if next_tok.startswith('#'):  # 跳过元数据行
+                    j += 1
+                    continue
+                if _CHORD_RE.match(next_tok) and not _NOTE_RE.match(next_tok):
+                    found_next_chord = True
+                    break
+                j += 1
+            
+            # 计算持续时间
+            chord_duration_ticks = 0
+            
+            # 如果找到下一个和弦，计算两者之间的时间间隔
+            if found_next_chord:
+                temp_tick = cur_tick
+                k = i + 1
+                while k < j:
+                    tok_k = toks[k]
+                    if tok_k.startswith('#') or tok_k in ('|', '||'):
+                        k += 1
+                        continue
+                    
+                    m_rest_k = _REST_RE.match(tok_k)
+                    if m_rest_k:
+                        beats_k = _beats(m_rest_k.group('dur') or '', m_rest_k.group('dots'), unit)
+                        temp_tick += int(beats_k * TICKS_PER_BEAT)
+                        k += 1
+                        continue
+                    
+                    m_k = _NOTE_RE.match(tok_k)
+                    if m_k:
+                        beats_k = _beats(m_k.group('dur') or '', m_k.group('dots'), unit)
+                        tie_k = bool(m_k.group('tie'))
+                        # 连音线合并
+                        l = k
+                        while tie_k and l + 1 < j:
+                            nxt_k = _NOTE_RE.match(toks[l + 1])
+                            if not nxt_k:
+                                break
+                            beats_k += _beats(nxt_k.group('dur') or '', nxt_k.group('dots'), unit)
+                            tie_k = bool(nxt_k.group('tie'))
+                            l += 1
+                        temp_tick += int(beats_k * TICKS_PER_BEAT)
+                        k = l + 1
+                        continue
+                    
+                    k += 1  # 处理其他类型的标记
+                
+                chord_duration_ticks = max(1, temp_tick - chord_start_tick)
+            else:
+                # 如果是最后一个和弦，使用默认持续时间，比如1小节
+                chord_duration_ticks = max(1, int(beats_per_measure * TICKS_PER_BEAT))
+
+            # 解析和弦并使用模式生成事件
+            new_chord_notes = parse_chord(tok)
+            if new_chord_notes:
+                chord_last_tick = current_chord_pattern.generate_events(
+                    new_chord_notes,
+                    chord_start_tick,
+                    chord_duration_ticks,
+                    chords,
+                    chord_last_tick
+                )
+                chord_active = new_chord_notes
+            else:
+                chord_active = []
+            
             i += 1
             continue
 
@@ -198,7 +282,7 @@ def build_midi(parser: ScoreParser,
     # 关掉末尾和弦
     if chord_active:
         first = True
-        dt = cur_tick - chord_last_tick
+        dt = max(0, cur_tick - chord_last_tick)  # 确保时间为非负
         for p in chord_active:
             chords.append(Message('note_off', channel=CHORD_CH,
                                   note=p, velocity=0,
