@@ -33,7 +33,7 @@ from pathlib import Path
 
 from mido import MidiFile, MidiTrack, Message, MetaMessage, bpm2tempo
 from constants import *
-from parse_chord import parse_chord
+from parse_chord import Chord
 from utils import _beats, _norm_key, _degree2midi
 from reutils import _NOTE_RE, _REST_RE, _CHORD_RE
 from chord_patterns import get_chord_pattern
@@ -221,7 +221,7 @@ def build_midi(parser: ScoreParser,
                 chord_duration_ticks = max(1, int(beats_per_measure * TICKS_PER_BEAT))
 
             # 解析和弦并使用模式生成事件
-            new_chord_notes = parse_chord(tok)
+            new_chord_notes = Chord(tok)
             if new_chord_notes:
                 chord_last_tick = current_chord_pattern.generate_events(
                     new_chord_notes,

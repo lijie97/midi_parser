@@ -3,7 +3,26 @@
 from constants import NOTE2MIDI
 
 
-def parse_chord(sym: str) -> list[int]:
+class Chord:
+    def __init__(self, chord:str):
+        self.chord = chord
+        self.notes = _parse_chord(chord)
+
+    def __getitem__(self, item):
+        octave = 0
+        while item >= len(self.notes):
+            item = item - len(self.notes)
+            octave += 1
+        return self.notes[item] + octave * 12
+    
+    def __iter__(self):
+        return iter(self.notes)
+
+    def __len__(self):
+        return len(self.notes)
+
+
+def _parse_chord(sym: str) -> list[int]:
     """
     解析和弦符号，返回MIDI音符列表:
     - 大三和弦: 'C', 'F#', 'Bb'
@@ -71,3 +90,5 @@ def parse_chord(sym: str) -> list[int]:
         intervals = (0, 4, 7, 10, 14)
     
     return [root_pitch + iv for iv in intervals]
+
+
