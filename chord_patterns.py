@@ -368,12 +368,25 @@ class AdvancedGuitarPattern(ChordPattern):
         }
     }
     
+    # GM音色表中的吉他音色 (General MIDI标准)
+    GUITAR_PROGRAMS = {
+        'acoustic_nylon': 24,   # 尼龙弦吉他
+        'acoustic_steel': 25,   # 钢弦吉他
+        'electric_jazz': 26,    # 爵士吉他
+        'electric_clean': 27,   # 清音电吉他
+        'electric_muted': 28,   # 闷音电吉他
+        'overdriven': 29,       # 失真吉他
+        'distortion': 30,       # 重失真吉他
+        'harmonics': 31,        # 泛音吉他
+    }
+    
     def __init__(self, 
                 velocity: int = CHORD_VELOCITY, 
                 strum_duration: float = 0.03,
                 time_signature: tuple = (4, 4),
                 rhythm_style: str = 'basic', 
-                custom_pattern: list = None):
+                custom_pattern: list = None,
+                guitar_type: str = None):
         """
         Args:
             velocity: 基础音符力度
@@ -381,10 +394,15 @@ class AdvancedGuitarPattern(ChordPattern):
             time_signature: 拍号，格式为(分子, 分母)，如(4, 4)表示4/4拍
             rhythm_style: 预定义节奏风格, 如'basic', 'folk', 'rock'等
             custom_pattern: 自定义节奏模式
+            guitar_type: 吉他类型(音色), 可选值:
+                         'acoustic_nylon', 'acoustic_steel', 'electric_jazz',
+                         'electric_clean', 'electric_muted', 'overdriven',
+                         'distortion', 'harmonics'
         """
         super().__init__(velocity)
         self.strum_duration = strum_duration
         self.time_signature = time_signature
+        self.guitar_type = guitar_type
         
         # 根据拍号获取合适的节奏模式
         num, den = time_signature
@@ -412,6 +430,28 @@ class AdvancedGuitarPattern(ChordPattern):
                     # 重复模式
                     repeats = (target_len // pattern_len) + (1 if target_len % pattern_len > 0 else 0)
                     self.pattern = (self.pattern * repeats)[:target_len]
+    
+    def setup_guitar_program(self, track: mido.MidiTrack, current_time: int = 0):
+        """
+        设置吉他音色
+        
+        Args:
+            track: MIDI轨道
+            current_time: 当前时间点
+            
+        Returns:
+            应用了音色设置的轨道
+        """
+        if self.guitar_type and self.guitar_type in self.GUITAR_PROGRAMS:
+            # 设置和弦通道的乐器音色为选定的吉他类型
+            program = self.GUITAR_PROGRAMS[self.guitar_type]
+            track.append(mido.Message(
+                'program_change', 
+                channel=CHORD_CH, 
+                program=program, 
+                time=current_time
+            ))
+        return track
     
     def _get_bass_notes(self, notes):
         """获取低音部分（通常是最低的1-2个音）"""
@@ -450,7 +490,11 @@ class AdvancedGuitarPattern(ChordPattern):
     ) -> int:
         if not chord_notes:
             return last_tick
-
+        
+        # 如果是第一次调用，设置吉他音色
+        if start_tick == 0 or last_tick == 0:
+            self.setup_guitar_program(track, 0)
+        
         # ---------- 基础参数 ----------
         dt_to_first = max(0, start_tick - last_tick)
         duration_ticks = max(1, duration_ticks)
@@ -522,17 +566,36 @@ class AdvancedGuitarPattern(ChordPattern):
 
 # 工厂函数，根据模式名称返回对应的模式实例
 def get_chord_pattern(pattern_name: str, time_signature: tuple = (4, 4), **kwargs) -> ChordPattern:
+    """
+    根据模式名称和参数创建和弦模式实例
+    
+    Args:
+        pattern_name: 模式名称，可选值包括:
+                     "block", "arpeggio", "guitar", 
+                     "rhythmic", "adv_guitar",
+                     "folk_guitar", "rock_guitar", "ballad_guitar", 
+                     "country_guitar", "waltz_guitar"等
+        time_signature: 拍号，格式为(分子, 分母)
+        **kwargs: 其他参数，例如:
+                 - velocity: 基础音符力度
+                 - strum_duration: 扫弦持续时间
+                 - rhythm_style: 节奏风格
+                 - guitar_type: 吉他类型/音色
+    
+    Returns:
+        创建的和弦模式实例
+    """
     patterns = {
         "block": BlockChordPattern(**kwargs),
         "arpeggio": ArpeggioChordPattern(**kwargs),
         "guitar": GuitarStrumsPattern(**kwargs),
         "rhythmic": RhythmicArpeggioPattern(time_signature=time_signature, **kwargs),
-        "adv_guitar": AdvancedGuitarPattern(time_signature=time_signature, **kwargs),
-        "folk_guitar": AdvancedGuitarPattern(time_signature=time_signature, rhythm_style='folk', **kwargs),
-        "rock_guitar": AdvancedGuitarPattern(time_signature=time_signature, rhythm_style='rock', **kwargs),
-        "ballad_guitar": AdvancedGuitarPattern(time_signature=time_signature, rhythm_style='ballad', **kwargs),
-        "country_guitar": AdvancedGuitarPattern(time_signature=time_signature, rhythm_style='country', **kwargs),
-        "waltz_guitar": AdvancedGuitarPattern(time_signature=(3, 4), rhythm_style='waltz', **kwargs),
+        "adv_guitar": AdvancedGuitarPattern(time_signature=time_signature, guitar_type='acoustic_steel', **kwargs),
+        "folk_guitar": AdvancedGuitarPattern(time_signature=time_signature, rhythm_style='folk', guitar_type='acoustic_steel', **kwargs),
+        "rock_guitar": AdvancedGuitarPattern(time_signature=time_signature, rhythm_style='rock', guitar_type='electric_jazz', **kwargs),
+        "ballad_guitar": AdvancedGuitarPattern(time_signature=time_signature, rhythm_style='ballad', guitar_type='acoustic_steel', **kwargs),
+        "country_guitar": AdvancedGuitarPattern(time_signature=time_signature, rhythm_style='country', guitar_type='acoustic_steel', **kwargs),
+        "waltz_guitar": AdvancedGuitarPattern(time_signature=(3, 4), rhythm_style='waltz', guitar_type='acoustic_nylon', **kwargs),
         # 可以在这里添加更多模式
     }
     
