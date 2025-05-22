@@ -22,7 +22,7 @@ jianpu2midi.py
 # octave      = { "'" | "," } ;
 # duration    = "w" | "h" | "q" | "e" | "s" | "t" | "/" , unsigned_int ;
 # dots        = "." | ".." ;
-# tie         = "-" ;
+# tie         = "^" ;
 # rest        = "R" | "0" ;
 """
 
@@ -387,7 +387,7 @@ def main():
     parser = ScoreParser(txt.read_text(encoding='utf-8'))
     mid_path = build_midi(parser, out, metro_on, metro_vel)
     print(f"✓ 已生成 MIDI: {mid_path}")
-    play_midi(mid_path)
+    # play_midi(mid_path)
 
 
 if __name__ == "__main__":
