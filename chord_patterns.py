@@ -15,7 +15,9 @@ class ChordPattern:
                         start_tick: int, 
                         duration_ticks: int, 
                         track: mido.MidiTrack,
-                        last_tick: int) -> int:
+                        last_tick: int,
+                        from_tick: float = 0.0,
+                        to_tick: float = 1.0) -> int:
         """
         生成和弦的MIDI事件
         
@@ -25,6 +27,8 @@ class ChordPattern:
             duration_ticks: 和弦持续的tick数
             track: 要添加事件的MIDI轨道
             last_tick: 上一个和弦事件的时间
+            from_tick: 和弦起始位置的相对比例（0.0-1.0），用于中途插入和弦
+            to_tick: 和弦结束位置的相对比例（0.0-1.0），用于提前结束和弦
             
         Returns:
             最后一个和弦事件的绝对tick
@@ -40,13 +44,20 @@ class BlockChordPattern(ChordPattern):
                         start_tick: int, 
                         duration_ticks: int, 
                         track: mido.MidiTrack,
-                        last_tick: int) -> int:
+                        last_tick: int,
+                        from_tick: float = 0.0,
+                        to_tick: float = 1.0) -> int:
         if not chord_notes:
             return last_tick
             
         # 确保时间值为非负数
         dt = max(0, start_tick - last_tick)
         duration_ticks = max(1, duration_ticks)
+        
+        # 计算实际的起始和结束位置
+        actual_start_offset = int(from_tick * duration_ticks)
+        actual_end_offset = int(to_tick * duration_ticks)
+        actual_duration = max(1, actual_end_offset - actual_start_offset)
             
         # 和弦音符同时开始
         first = True
@@ -61,10 +72,10 @@ class BlockChordPattern(ChordPattern):
         for note in chord_notes:
             track.append(mido.Message('note_off', channel=CHORD_CH,
                                       note=note, velocity=0,
-                                      time=duration_ticks if first else 0))
+                                      time=actual_duration if first else 0))
             first = False
             
-        return start_tick + duration_ticks
+        return start_tick + actual_duration
 
 
 class ArpeggioChordPattern(ChordPattern):
@@ -82,7 +93,9 @@ class ArpeggioChordPattern(ChordPattern):
                         start_tick: int, 
                         duration_ticks: int, 
                         track: mido.MidiTrack,
-                        last_tick: int) -> int:
+                        last_tick: int,
+                        from_tick: float = 0.0,
+                        to_tick: float = 1.0) -> int:
         if not chord_notes:
             return last_tick
         
@@ -90,13 +103,18 @@ class ArpeggioChordPattern(ChordPattern):
         dt = max(0, start_tick - last_tick)
         duration_ticks = max(1, duration_ticks)
         
+        # 计算实际的起始和结束位置
+        actual_start_offset = int(from_tick * duration_ticks)
+        actual_end_offset = int(to_tick * duration_ticks)
+        actual_duration = max(1, actual_end_offset - actual_start_offset)
+        
         # 计算每个音符的持续时间
         note_count = len(chord_notes)
         if note_count == 0:
             return last_tick
         
-        # 根据和弦总时长和音符数量确定每个音符的时长
-        single_note_duration = duration_ticks // note_count
+        # 根据实际持续时长和音符数量确定每个音符的时长
+        single_note_duration = actual_duration // note_count
         
         # 第一个音符的延迟
         current_time = dt
@@ -138,13 +156,20 @@ class GuitarStrumsPattern(ChordPattern):
                         start_tick: int, 
                         duration_ticks: int, 
                         track: mido.MidiTrack,
-                        last_tick: int) -> int:
+                        last_tick: int,
+                        from_tick: float = 0.0,
+                        to_tick: float = 1.0) -> int:
         if not chord_notes:
             return last_tick
         
         # 确保时间值为非负数
         dt = max(0, start_tick - last_tick)
         duration_ticks = max(1, duration_ticks)
+        
+        # 计算实际的起始和结束位置
+        actual_start_offset = int(from_tick * duration_ticks)
+        actual_end_offset = int(to_tick * duration_ticks)
+        actual_duration = max(1, actual_end_offset - actual_start_offset)
             
         # 按音高排序（吉他扫弦通常从低音到高音）
         sorted_notes = sorted(chord_notes)
@@ -155,7 +180,7 @@ class GuitarStrumsPattern(ChordPattern):
         total_strum_ticks = strum_ticks * (note_count - 1) if note_count > 1 else 0
         
         # 确保总时长不变
-        note_duration = max(1, duration_ticks - total_strum_ticks)
+        note_duration = max(1, actual_duration - total_strum_ticks)
         
         # 添加所有音符的note_on事件
         for i, note in enumerate(sorted_notes):
@@ -173,7 +198,7 @@ class GuitarStrumsPattern(ChordPattern):
                                      time=note_duration if first else 0))
             first = False
         
-        return start_tick + duration_ticks
+        return start_tick + actual_duration
 
 
 # 创建节奏型分解和弦类
@@ -194,13 +219,20 @@ class RhythmicArpeggioPattern(ChordPattern):
                         start_tick: int, 
                         duration_ticks: int, 
                         track: mido.MidiTrack,
-                        last_tick: int) -> int:
+                        last_tick: int,
+                        from_tick: float = 0.0,
+                        to_tick: float = 1.0) -> int:
         if not chord_notes:
             return last_tick
         
         # 确保时间值为非负数
         dt = max(0, start_tick - last_tick)
         duration_ticks = max(1, duration_ticks)
+        
+        # 计算实际的起始和结束位置
+        actual_start_offset = int(from_tick * duration_ticks)
+        actual_end_offset = int(to_tick * duration_ticks)
+        actual_duration = max(1, actual_end_offset - actual_start_offset)
         
         # 获取拍号
         num, den = self.time_signature
@@ -249,15 +281,22 @@ class RhythmicArpeggioPattern(ChordPattern):
         if not pattern_idx:
             pattern_idx = [0]
         
+        # 调整模式长度以适应实际持续时间
+        total_pattern_notes = len(pattern_idx)
+        # 根据from_tick和to_tick计算实际要播放的模式部分
+        start_idx = int(from_tick * total_pattern_notes)
+        end_idx = int(to_tick * total_pattern_notes)
+        pattern_idx = pattern_idx[start_idx:end_idx]
+        
         # 计算每个模式单位的tick数
         if num == 6 and den == 8:  # 6/8拍比较特殊，通常分为两组
             notes_per_beat = 3
             total_notes = len(pattern_idx)
-            pattern_unit_ticks = duration_ticks // total_notes
+            pattern_unit_ticks = actual_duration // total_notes if total_notes > 0 else actual_duration
         else:
             notes_per_beat = 2  # 默认每拍分两个音符（八分音符节奏）
             total_notes = len(pattern_idx)
-            pattern_unit_ticks = duration_ticks // total_notes
+            pattern_unit_ticks = actual_duration // total_notes if total_notes > 0 else actual_duration
         
         # 生成音符事件
         current_time = dt
@@ -276,7 +315,7 @@ class RhythmicArpeggioPattern(ChordPattern):
             # 添加note_off事件
             # 如果是模式的最后一个音符，确保持续到和弦结束
             if i == len(pattern_idx) - 1:
-                remaining_ticks = max(1, duration_ticks - (total_notes - 1) * pattern_unit_ticks)
+                remaining_ticks = max(1, actual_duration - (total_notes - 1) * pattern_unit_ticks)
                 track.append(mido.Message('note_off', channel=CHORD_CH,
                                          note=note, velocity=0,
                                          time=remaining_ticks))
@@ -486,7 +525,9 @@ class AdvancedGuitarPattern(ChordPattern):
             start_tick: int,
             duration_ticks: int,
             track: mido.MidiTrack,
-            last_tick: int
+            last_tick: int,
+            from_tick: float = 0.0,
+            to_tick: float = 1.0
     ) -> int:
         if not chord_notes:
             return last_tick
@@ -498,10 +539,24 @@ class AdvancedGuitarPattern(ChordPattern):
         # ---------- 基础参数 ----------
         dt_to_first = max(0, start_tick - last_tick)
         duration_ticks = max(1, duration_ticks)
+        
+        # 计算实际的起始和结束位置
+        actual_start_offset = int(from_tick * duration_ticks)
+        actual_end_offset = int(to_tick * duration_ticks)
+        actual_duration = max(1, actual_end_offset - actual_start_offset)
 
+        # 调整模式长度以适应实际持续时间
         pattern_len = max(1, len(self.pattern))
-        unit_ticks = duration_ticks // pattern_len
-        last_unit_ticks = duration_ticks - unit_ticks * (pattern_len - 1)
+        start_pattern_idx = int(from_tick * pattern_len)
+        end_pattern_idx = int(to_tick * pattern_len)
+        adjusted_pattern = self.pattern[start_pattern_idx:end_pattern_idx]
+        pattern_len = len(adjusted_pattern)
+        
+        if pattern_len == 0:
+            return last_tick
+
+        unit_ticks = actual_duration // pattern_len
+        last_unit_ticks = actual_duration - unit_ticks * (pattern_len - 1)
 
         strum_time = min(
             int(self.strum_duration * TICKS_PER_BEAT),
@@ -512,7 +567,7 @@ class AdvancedGuitarPattern(ChordPattern):
         dt_head = dt_to_first  # 首音 delta-time
 
         # ---------- 遍历节奏单元 ----------
-        for i, (direction, strum_type, vel_adj) in enumerate(self.pattern):
+        for i, (direction, strum_type, vel_adj) in enumerate(adjusted_pattern):
             # ① 选择需要扫的音符 -------------------------
             sorted_notes = sorted(chord_notes)
             notes_to_play = {
@@ -581,6 +636,8 @@ def get_chord_pattern(pattern_name: str, time_signature: tuple = (4, 4), **kwarg
                  - strum_duration: 扫弦持续时间
                  - rhythm_style: 节奏风格
                  - guitar_type: 吉他类型/音色
+                 - from_tick: 和弦起始位置的相对比例（0.0-1.0）
+                 - to_tick: 和弦结束位置的相对比例（0.0-1.0）
     
     Returns:
         创建的和弦模式实例

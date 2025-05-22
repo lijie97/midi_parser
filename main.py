@@ -102,6 +102,12 @@ def build_midi(parser: ScoreParser,
     delta_melody = 0        # 距离下一 melody 事件
     measure_beats = 0       # 当前小节已累积拍数
 
+    # 添加跟踪小节的开始位置变量
+    measure_start_tick = 0     # 当前小节的起始时间
+
+    measure_total_ticks = beats_per_measure * TICKS_PER_BEAT
+    
+
     chord_active = []
     chord_last_tick = 0
     current_chord_pattern = chord_pattern
@@ -131,6 +137,8 @@ def build_midi(parser: ScoreParser,
                 pad_ticks = int(left * TICKS_PER_BEAT)
                 delta_melody += pad_ticks
                 cur_tick += pad_ticks
+            # 更新小节开始位置
+            measure_start_tick = cur_tick
             measure_beats = 0
             i += 1
             continue
@@ -223,12 +231,41 @@ def build_midi(parser: ScoreParser,
             # 解析和弦并使用模式生成事件
             new_chord_notes = Chord(tok)
             if new_chord_notes:
+                # 计算前一个和弦和当前和弦在小节内的相对位置
+                from_tick = 0.0  # 默认从头开始
+                to_tick = 1.0    # 默认到尾结束
+                
+                # 如果找到了下一个和弦，计算相对位置
+                if found_next_chord:
+                    # 当前和弦在小节内的位置
+                    measure_beats_total = beats_per_measure * TICKS_PER_BEAT
+                    
+                    # 计算当前和弦开始相对于小节开始的位置
+                    if chord_start_tick >= measure_start_tick:
+                        chord_offset = chord_start_tick - measure_start_tick
+                        from_tick = min(1.0, chord_offset / measure_beats_total)
+                    
+                    # 计算下一个和弦开始的时间点（当前和弦结束的时间点）
+                    next_chord_tick = chord_start_tick + chord_duration_ticks
+                    
+                    # 如果下一个和弦在当前小节内，调整结束位置
+                    if next_chord_tick < measure_start_tick + measure_beats_total:
+                        next_offset = next_chord_tick - measure_start_tick
+                        to_tick = min(1.0, next_offset / measure_beats_total)
+                    
+                    # 仅在开发环境启用调试信息
+                    if 'DEBUG' in parser.meta and parser.meta['DEBUG'].lower() in ('true', 'yes', '1'):
+                        print(f"调试：和弦 {tok}，start={chord_start_tick}，duration={chord_duration_ticks}，"
+                              f"measure_start={measure_start_tick}，from_tick={from_tick:.2f}，to_tick={to_tick:.2f}")
+                
                 chord_last_tick = current_chord_pattern.generate_events(
                     new_chord_notes,
                     chord_start_tick,
-                    chord_duration_ticks,
+                    measure_total_ticks,
                     chords,
-                    chord_last_tick
+                    chord_last_tick,
+                    from_tick,
+                    to_tick
                 )
                 chord_active = new_chord_notes
             else:
@@ -278,6 +315,8 @@ def build_midi(parser: ScoreParser,
         pad_ticks = int(left * TICKS_PER_BEAT)
         melody.append(Message('note_off', note=0, velocity=0, time=pad_ticks))
         cur_tick += pad_ticks
+        # 更新小节开始位置（虽然已经结束，但保持一致性）
+        measure_start_tick = cur_tick
 
     # 关掉末尾和弦
     if chord_active:
