@@ -65,7 +65,9 @@ class ScoreParser:
 def build_midi(parser: ScoreParser,
                outfile: Path,
                metro_on: bool = False,
-               metro_vel: tuple[int, int] = (90, 60)) -> Path:
+               metro_vel: tuple[int, int] = (90, 60),
+               from_measure: int = 0,
+               to_measure: int = None) -> Path:
 
     unit = DUR2BEAT.get(parser.meta.get('UNIT', 'q').lower(), 1)
     tempo_bpm = int(parser.meta.get('TEMPO', 120))
@@ -101,6 +103,8 @@ def build_midi(parser: ScoreParser,
     cur_tick = 0            # 绝对时间
     delta_melody = 0        # 距离下一 melody 事件
     measure_beats = 0       # 当前小节已累积拍数
+    current_measure = 1     # 当前小节号
+    is_recording = from_measure <= 1  # 是否正在记录
 
     # 添加跟踪小节的开始位置变量
     measure_start_tick = 0     # 当前小节的起始时间
@@ -117,6 +121,10 @@ def build_midi(parser: ScoreParser,
     while i < n:
         tok = toks[i]
         
+        # 检查是否需要结束记录
+        if to_measure is not None and current_measure > to_measure:
+            break
+        
         # ── 元数据行 ──
         if tok.startswith('#'):
             if 'CHORD_PATTERN' in tok.upper():
@@ -132,14 +140,22 @@ def build_midi(parser: ScoreParser,
         if tok in ('|', '||'):
             left = beats_per_measure - measure_beats
             if left < -1e-6:
-                raise ValueError(f'第 {tok} 前小节超拍，请检查节奏')
-            if left > 1e-6:                               # 自动补足不足拍
+                raise ValueError(f'第 {current_measure} 小节超拍，请检查节奏')
+            if left > 1e-6 and is_recording:   # 只在记录时补充
                 pad_ticks = int(left * TICKS_PER_BEAT)
                 delta_melody += pad_ticks
                 cur_tick += pad_ticks
             # 更新小节开始位置
             measure_start_tick = cur_tick
             measure_beats = 0
+            current_measure += 1
+            # 检查是否开始记录
+            is_recording = current_measure >= from_measure
+            i += 1
+            continue
+
+        # 如果不在记录范围内，跳过处理
+        if not is_recording:
             i += 1
             continue
 
@@ -310,7 +326,7 @@ def build_midi(parser: ScoreParser,
     # 收尾：补足最后一个小节
     left = beats_per_measure - measure_beats
     if left < -1e-6:
-        raise ValueError('最后小节超拍，请检查节奏')
+        raise ValueError(f'第 {current_measure} 小节超拍，请检查节奏')
     if left > 1e-6:
         pad_ticks = int(left * TICKS_PER_BEAT)
         melody.append(Message('note_off', note=0, velocity=0, time=pad_ticks))
@@ -369,11 +385,16 @@ def main():
         print(__doc__); sys.exit(1)
 
     txt = Path(sys.argv[1])
-    out = (Path(sys.argv[2]) if len(sys.argv) > 2 and not sys.argv[2].startswith('-')
-           else txt.with_suffix('.mid'))
+    out = None
+    metro_on = False
+    metro_vel = (90, 60)
+    from_measure = 0
+    to_measure = None
+    should_play = False
 
-    metro_on, metro_vel = False, (90, 60)
-    for arg in sys.argv[2:]:
+    i = 2
+    while i < len(sys.argv):
+        arg = sys.argv[i]
         if arg in ('-m', '--metronome', '--metro'):
             metro_on = True
         elif arg.startswith('--metronome=') or arg.startswith('--metro='):
@@ -383,11 +404,38 @@ def main():
                 metro_vel = (max(0, min(acc, 127)), max(0, min(reg, 127)))
             except ValueError:
                 print('节拍器力度应为 "A,R"，已用默认 90,60')
+        elif arg == '-p':
+            should_play = True
+        elif arg == '-f':
+            if i + 1 < len(sys.argv):
+                try:
+                    from_measure = int(sys.argv[i + 1])
+                    i += 1
+                except ValueError:
+                    print('起始小节应为整数，已用默认值 0')
+        elif arg == '-t':
+            if i + 1 < len(sys.argv):
+                try:
+                    to_measure = int(sys.argv[i + 1])
+                    i += 1
+                except ValueError:
+                    print('结束小节应为整数')
+        elif arg == '-o':
+            if i + 1 < len(sys.argv):
+                out = Path(sys.argv[i + 1])
+                i += 1
+        elif not arg.startswith('-') and out is None:
+            out = Path(arg)
+        i += 1
+
+    if out is None:
+        out = txt.with_suffix('.mid')
 
     parser = ScoreParser(txt.read_text(encoding='utf-8'))
-    mid_path = build_midi(parser, out, metro_on, metro_vel)
+    mid_path = build_midi(parser, out, metro_on, metro_vel, from_measure, to_measure)
     print(f"✓ 已生成 MIDI: {mid_path}")
-    # play_midi(mid_path)
+    if should_play:
+        play_midi(mid_path)
 
 
 if __name__ == "__main__":
